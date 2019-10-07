@@ -35,6 +35,7 @@ from keras.optimizers import Adam, SGD
 from keras.callbacks import Callback, ModelCheckpoint
 
 import utils as ut
+import time
 
 a = int(sys.argv[1]) #Nodes
 layer = int(sys.argv[2]) #Layers
@@ -154,7 +155,7 @@ def inputvars(sigdata, bkgdata, signame, bkgname, **kwds):
 #Compute AUC after training and plot ROC
 ########################################
 class roc_callback(Callback):
-    def __init__(self, training_data, validation_data, model, event):
+    def __init__(self, training_data, validation_data, model, event, epoch_time):
         self.x = training_data[0]
         self.y = training_data[1]
         self.x_val = validation_data[0]
@@ -169,9 +170,13 @@ class roc_callback(Callback):
         return
 
     def on_epoch_begin(self, epoch, logs={}):
+        self.epoch_time = time.time()
         return
 
-    def on_epoch_end(self, epoch, logs={}):
+    def on_epoch_end(self, epoch, epoch_time, logs={}):
+        epoch_time = self.epoch_time
+        print('RunTime of epoch '+str(epoch+1)+': %s ' % (self.time.time() - epoch_time))
+
         ############
         #compute AUC
         ############
@@ -238,27 +243,27 @@ class roc_callback(Callback):
         high = max(np.max(d) for d in scores)
         low_high = (low,high)
 
-        #test is filled
-        plt.hist(tpr[1],
+        #train is filled
+        plt.hist(tpr[2],
             color='b', alpha=0.5, range=low_high, bins=bins,
-            histtype='stepfilled', density=True, label='S (test)')
-        plt.hist(fpr[1],
+            histtype='stepfilled', density=True, label='S (train)')
+        plt.hist(fpr[2],
             color='r', alpha=0.5, range=low_high, bins=bins,
-            histtype='stepfilled', density=True, label='B (test)')
+            histtype='stepfilled', density=True, label='B (train)')
 
-        #training is dotted
-        hist, bins = np.histogram(tpr[2], bins=bins, range=low_high, density=True)
-        scale = len(tpr[2]) / sum(hist)
+        #test is dotted
+        hist, bins = np.histogram(tpr[1], bins=bins, range=low_high, density=True)
+        scale = len(tpr[1]) / sum(hist)
         err = np.sqrt(hist * scale) / scale
         width = (bins[1] - bins[0])
         center = (bins[:-1] + bins[1:]) / 2
-        plt.errorbar(center, hist, yerr=err, fmt='o', c='b', label='S (training)')
-        hist, bins = np.histogram(fpr[2], bins=bins, range=low_high, density=True)
-        scale = len(tpr[2]) / sum(hist)
+        plt.errorbar(center, hist, yerr=err, fmt='o', c='b', label='S (test)')
+        hist, bins = np.histogram(fpr[1], bins=bins, range=low_high, density=True)
+        scale = len(tpr[1]) / sum(hist)
         err = np.sqrt(hist * scale) / scale
-        plt.errorbar(center, hist, yerr=err, fmt='o', c='r', label='B (training)')
+        plt.errorbar(center, hist, yerr=err, fmt='o', c='r', label='B (test)')
 
-        plt.xlabel("Deep Learning Score")
+        plt.xlabel("Deep Learning Output")
         plt.ylabel("Arbitrary units")
         plt.legend(loc='best')
         overtrain_path = configDir+weightDir+ver+'/fig_overtraining_%d_%.4f.pdf' %(epoch+1,round(roc_val,4))
@@ -284,6 +289,9 @@ class roc_callback(Callback):
         return
 
 data = pd.read_hdf(trainInput)
+print("run start")
+run_start_time = time.time()
+
 data = data.reset_index(drop=True)
 ##########################################
 #drop phi and label features, correlations
@@ -349,6 +357,9 @@ data_test_sc = scaler.fit_transform(data_test)
 X_train = data_train_sc
 X_test = data_test_sc
 
+print("train")
+train_start_time = time.time()
+
 #################################
 #Keras model compile and training
 #################################
@@ -382,8 +393,10 @@ history = train_model.fit(X_train, Y_train,
                              epochs=100, batch_size=1024,
                              validation_data=(X_test,Y_test),
                              #class_weight={ 0: 14, 1: 1 }, 
-                             callbacks=[roc_callback(training_data=(X_train,Y_train), validation_data=(X_test,Y_test), model=train_model, event=test_event)]
+                             callbacks=[roc_callback(training_data=(X_train,Y_train), validation_data=(X_test,Y_test), model=train_model, event=test_event, epoch_time=time.time())]
                              )
+
+train_end_time = time.time()
 
 print("Plotting scores")
 plt.plot(history.history['binary_accuracy'])
@@ -436,17 +449,6 @@ tmp = bestModel.split('_')
 bestEpoch = tmp[1]
 print("Best Epoch : ", bestEpoch)
 
-#print("Now predict score with test set")
-#bestModel = ""
-#best_acc = 0.0
-#for filename in os.listdir(configDir+weightDir+ver):
-#    if not "h5" in filename : continue
-#    tmp = filename.split('.')
-#    tmp_acc = float("0."+tmp[1])
-#    if tmp_acc > best_acc :
-#        best_acc = tmp_acc
-#        bestModel = filename
-
 print("Use "+bestModel)
 model_best = load_model(configDir+weightDir+ver+'/'+bestModel)
 y_pred = model_best.predict(X_test, batch_size=1024)
@@ -454,6 +456,10 @@ y_pred = model_best.predict(X_test, batch_size=1024)
 #print("Test loss : ", score[0])
 #print("Test accuracy : ", score[1])
 #print(y_pred)
+
+print("Total running time :%s " %(time.time() - run_start_time))
+print("Total Training time (with all contents of callbacks) :%s " %(train_end_time - train_start_time))
+
 with open("result_lj_"+cut+".txt", "a") as f_log :
     print("writing results ...")
     
